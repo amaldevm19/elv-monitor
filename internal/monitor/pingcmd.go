@@ -29,7 +29,7 @@ func (p *PingCmdChecker) Check(ctx context.Context, d models.Device) CheckResult
 
 	if runtime.GOOS != "windows" {
 		return CheckResult{
-			DeviceID:  d.ID,
+			DeviceID:  d.Id,
 			IP:        d.IP,
 			Status:    StatusDown,
 			RTT:       0,
@@ -61,7 +61,7 @@ func (p *PingCmdChecker) Check(ctx context.Context, d models.Device) CheckResult
 		rtt := parsePingRTT(text)
 
 		return CheckResult{
-			DeviceID:  d.ID,
+			DeviceID:  d.Id,
 			IP:        d.IP,
 			Status:    StatusUp,
 			RTT:       rtt,
@@ -83,7 +83,7 @@ func (p *PingCmdChecker) Check(ctx context.Context, d models.Device) CheckResult
 	}
 
 	return CheckResult{
-		DeviceID:  d.ID,
+		DeviceID:  d.Id,
 		IP:        d.IP,
 		Status:    StatusDown,
 		RTT:       0,

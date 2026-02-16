@@ -1,0 +1,4 @@
+name,ip,interval,mode,tcpPort,enabled
+win-13,192.168.70.100,12,pingcmd,,true
+Dev Server,192.168.70.166,15,pingcmd,,true
+Camera-01,192.168.70.50,10,tcp,554,true

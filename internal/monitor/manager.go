@@ -47,7 +47,7 @@ func (m *Manager) SetDevices(devices []models.Device) {
 	defer m.mu.Unlock()
 	m.devs = make(map[string]models.Device, len(devices))
 	for _, d := range devices {
-		m.devs[d.ID] = d
+		m.devs[d.Id] = d
 	}
 }
 
@@ -133,9 +133,9 @@ func (m *Manager) Start() {
 					if iv <= 0 {
 						iv = 10
 					}
-					prev := lastrun[d.ID]
+					prev := lastrun[d.Id]
 					if prev.IsZero() || time.Since(prev) >= time.Duration(iv)*time.Second {
-						lastrun[d.ID] = time.Now()
+						lastrun[d.Id] = time.Now()
 						select {
 						case jobs <- d:
 							log.Printf("[Scheduler] Enqueue device %s (%s)\n", d.Name, d.IP)
@@ -187,13 +187,13 @@ func (m *Manager) CheckAuto(ctx context.Context, d models.Device) CheckResult {
 func (m *Manager) ApplyResult(d models.Device, r CheckResult) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	prev := m.state[d.ID]
+	prev := m.state[d.Id]
 
 	isFirst := prev.LastSeen.IsZero()
 
 	changed := !isFirst && prev.LastStatus != r.Status
 
-	m.state[d.ID] = DeviceState{
+	m.state[d.Id] = DeviceState{
 		LastStatus: r.Status,
 		LastSeen:   r.CheckedAt,
 		LastRTT:    r.RTT,

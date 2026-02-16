@@ -39,7 +39,7 @@ func (t TCPChecker) Check(ctx context.Context, d models.Device) CheckResult {
 
 	if err != nil {
 		return CheckResult{
-			DeviceID:  d.ID,
+			DeviceID:  d.Id,
 			IP:        d.IP,
 			Status:    StatusDown,
 			CheckedAt: now,
@@ -50,7 +50,7 @@ func (t TCPChecker) Check(ctx context.Context, d models.Device) CheckResult {
 	_ = conn.Close()
 
 	return CheckResult{
-		DeviceID:  d.ID,
+		DeviceID:  d.Id,
 		IP:        d.IP,
 		Status:    StatusUp,
 		CheckedAt: now,

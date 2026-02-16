@@ -17,7 +17,7 @@ func (i ICMPChecker) Check(ctx context.Context, d models.Device) CheckResult {
 
 	// We’ll implement native ICMP next. For now, return permission error so Auto mode falls back.
 	return CheckResult{
-		DeviceID:  d.ID,
+		DeviceID:  d.Id,
 		IP:        d.IP,
 		CheckedAt: time.Now(),
 		Status:    StatusDown,
