@@ -7,8 +7,11 @@ import {
     GetStatusSnapshot,
     AddDevice,
     DeleteDevice,
-    ImportDevices 
+    ImportDevices,
+    IsPolling  
 } from "../wailsjs/go/main/App"
+
+import { EventsOn } from "../wailsjs/runtime/runtime";
 
 function formatDateTime(dt){
     if(!dt) return "-";
@@ -22,10 +25,12 @@ function normalizeStatus(st){
     return String(st).toUpperCase();
 }
 
+
 function App(){
     const [devices, setDevices] = useState([]);
-    const [statusMap, setStatusMap] = useState({})
-    const [polling, setPolling] = useState(false)
+    const [statusMap, setStatusMap] = useState({});
+    const [polling, setPolling] = useState(false);
+    const [toasts, setToasts] = useState([]);
 
     // Form State
     const [name, setName] = useState("Device-1");
@@ -33,6 +38,7 @@ function App(){
     const [interval, setIntervalSec] = useState(10);
     const [mode, setMode] = useState("pingcmd");
     const [tcpPort, setTcpPort] = useState(80);
+    const [showAddModal,setShowAddModal] = useState(false)
 
     const refreshDevices = async ()=>{
         try {
@@ -44,10 +50,10 @@ function App(){
         }
     }
 
-    useEffect(()=>{
-        refreshDevices()
-    },[])
-
+    // // Refresh Devices
+    // useEffect(()=>{
+    //     refreshDevices()
+    // },[])
 
     //Load device once on Start
     useEffect(()=>{
@@ -61,7 +67,7 @@ function App(){
                 }
             }
         )()
-    })
+    },[])
     // Poll snapshot periodically
     useEffect(()=>{
         if (!polling) return;
@@ -70,7 +76,6 @@ function App(){
         const tick = async ()=>{
             try {
                 const snap = await GetStatusSnapshot();
-                console.log(snap)
                 if(alive) setStatusMap(snap);
             } catch (err) {
                console.error("Get Snapshot failed", err);
@@ -84,6 +89,38 @@ function App(){
         };
     },[polling]);
 
+     useEffect(() => {
+        (async () => setPolling(await IsPolling()))();
+    }, []);
+
+// Events Registration
+    useEffect(() => {
+        const off = EventsOn("device:changed", (p) => {
+            const name = p?.name ?? "";
+            const ip = p?.ip ?? "";
+            const reason = p?.reason ? ` (${p.reason})` : "";
+            showToast(`${name} ${ip} is ${p?.cur}${reason}`);
+        });
+        const offAdd =  EventsOn("ui:addDevice",()=>{
+            setShowAddModal(true)
+        })
+        const offImport = EventsOn("ui:importCSV",()=>{
+            document.getElementById("csvInput").click()
+        })
+        const offRefresh = EventsOn("ui:refreshDevice",()=>{
+            refreshDevices()
+        })
+        return () => {off(), offAdd(), offImport(), offRefresh() };
+    }, []);
+
+
+    useEffect(() => {
+        (async () => setPolling(await IsPolling()))();
+        const off = EventsOn("polling:changed", (v) => setPolling(!!v));
+        return () => off();
+    }, []);
+
+   
     const rows = useMemo(()=>{
         return (devices|| []).map((d)=>{
             const st = statusMap?.[d.id];
@@ -106,7 +143,7 @@ function App(){
     const onStart = async ()=>{
         try {
             await StartMonitoring();
-            setPolling(true);
+            
         } catch (err) {
            console.error("Failed to start Monitoring", err) 
         }
@@ -116,7 +153,7 @@ function App(){
     const onStop = async ()=>{
         try {
             await StopMonitoring()
-            setPolling(false)
+            
         } catch (err) {
             console.error("Failed to stop monitoring", err)
         }
@@ -151,6 +188,14 @@ function App(){
         }
     }
 
+    function showToast(msg) {
+        const id = `${Date.now()}-${Math.random()}`;
+        setToasts((t) => [...t, { id, msg }]);
+        setTimeout(() => {
+            setToasts((t) => t.filter((x) => x.id !== id));
+        }, 5000);
+    }
+
 
     return(
         <div style={{ padding: 16, fontFamily: "Segoe UI, sans-serif" }}>
@@ -164,85 +209,86 @@ function App(){
             </div>
             </div>
             {/* Add Device*/}
-            
-            <div
-                style={{
-                    border: "1px solid #ddd",
-                    borderRadius: 8,
-                    padding: 12,
-                    marginBottom: 12,
-                    display: "flex",
-                    gap: 8,
-                    flexWrap: "wrap",
-                    alignItems: "end",
+            {showAddModal &&
+                <div
+                    style={{
+                        border: "1px solid #ddd",
+                        borderRadius: 8,
+                        padding: 12,
+                        marginBottom: 12,
+                        display: "flex",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        alignItems: "end",
+                    }}
+                
+                >
+                    <div style={{display: "flex", flexDirection: "column", gap: 4}}>
+                        <label>Name</label>
+                        <input type="text" value={name} onChange={(e)=>{ setName(e.target.value)}} />
+                    </div>
+                    <div style={{display: "flex", flexDirection: "column", gap: 4}}>
+                        <label>IP</label>
+                        <input type="text" value={ip} onChange={(e)=>{ setIp(e.target.value)}} />
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <label htmlFor="">Interval (sec)</label>
+                        <input 
+                            type='Number'
+                            min = '1'
+                            value={interval}
+                            onChange={(e)=>{setIntervalSec(e.target.value)}}
+                            style={{ width: 120 }}
+                        >
+                        </input>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <label>Mode</label>
+                        <select value={mode} onChange={(e)=>{ setMode(e.target.value)}}>
+                            <option value="pingcmd">PingCmd (default)</option>
+                            <option value="tcp">TCP</option>
+                            <option value="icmp">ICMP (later)</option>
+                            <option value="auto">Auto</option>
+                        </select>
+                    </div>
+                    {
+                        mode === "tcp" && (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                <label htmlFor="">TCP Port</label>
+                                <input 
+                                type="Number"
+                                min="1"
+                                max="65535" 
+                                value={tcpPort} 
+                                onChange={(e)=>{setTcpPort(e.target.value)}} />
+                            </div>
+                        )
+                    }
+                    <button onClick={onAdd}>Add Device</button>
+                    <button onClick={()=>{setShowAddModal(false)}}>Close</button>
+                    
+                </div>
+            }
+            <input 
+                id='csvInput'
+                hidden
+                type="file"
+                accept=".csv,text/csv"
+                onChange = {async(e)=>{
+                    const file  = e.target.files?.[0]
+                    if (!file) return;
+                    const text = await file.text();
+                    const devs = parseDevicesCsv(text);
+                    const result = await ImportDevices(devs);
+                    const total = result?.total ?? result?.Total ?? 0;
+                    const added = result?.added ?? result?.Added ?? 0;
+                    const updated = result?.updated ?? result?.Updated ?? 0;
+                    const failed = result?.failed ?? result?.Failed ?? 0;
+                    const errors = result?.errors ?? result?.Errors ?? [];
+                    alert( `Imported: total=${total}, added=${added}, updated=${updated}, failed=${failed}\n` +(errors?.length ? errors.slice(0, 8).join("\n") : ""));
+                    await refreshDevices();
                 }}
-            >
-                <div style={{display: "flex", flexDirection: "column", gap: 4}}>
-                    <label>Name</label>
-                    <input type="text" value={name} onChange={(e)=>{ setName(e.target.value)}} />
-                </div>
-                <div style={{display: "flex", flexDirection: "column", gap: 4}}>
-                    <label>IP</label>
-                    <input type="text" value={ip} onChange={(e)=>{ setIp(e.target.value)}} />
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <label htmlFor="">Interval (sec)</label>
-                    <input 
-                        type='Number'
-                        min = '1'
-                        value={interval}
-                        onChange={(e)=>{setIntervalSec(e.target.value)}}
-                        style={{ width: 120 }}
-                    >
-                    </input>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <label>Mode</label>
-                    <select value={mode} onChange={(e)=>{ setMode(e.target.value)}}>
-                        <option value="pingcmd">PingCmd (default)</option>
-                        <option value="tcp">TCP</option>
-                        <option value="icmp">ICMP (later)</option>
-                        <option value="auto">Auto</option>
-                    </select>
-                </div>
-                {
-                    mode === "tcp" && (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                            <label htmlFor="">TCP Port</label>
-                            <input 
-                            type="Number"
-                            min="1"
-                            max="65535" 
-                            value={tcpPort} 
-                            onChange={(e)=>{setTcpPort(e.target.value)}} />
-                        </div>
-                    )
-                }
-                <button onClick={onAdd}>Add Device</button>
-                <div style={{ marginBottom: 12 }}>
-                    <label style={{ marginRight: 8 }}>Import CSV:</label>
-                    <input 
-                        type="file"
-                        accept=".csv,text/csv"
-                        onChange = {async(e)=>{
-                            const file  = e.target.files?.[0]
-                            if (!file) return;
-                            const text = await file.text();
-                            const devs = parseDevicesCsv(text);
-                            const result = await ImportDevices(devs);
-                            const total = result?.total ?? result?.Total ?? 0;
-                            const added = result?.added ?? result?.Added ?? 0;
-                            const updated = result?.updated ?? result?.Updated ?? 0;
-                            const failed = result?.failed ?? result?.Failed ?? 0;
-                            const errors = result?.errors ?? result?.Errors ?? [];
-                            alert( `Imported: total=${total}, added=${added}, updated=${updated}, failed=${failed}\n` +(errors?.length ? errors.slice(0, 8).join("\n") : ""));
-                            await refreshDevices();
-                        }}
-                    />
-                </div>
-            </div>
-
-
+            />
              <div style={{ overflowX: "auto" }}>
                 <table
                     style={{
@@ -273,7 +319,7 @@ function App(){
                                 const up = st === "UP";
                                 const down = st === "DOWN";
                                 return(
-                                    <tr key={r.Id}>
+                                    <tr key={r.id}>
                                         <td style={td}>{r.name}</td>
                                         <td style={td}>{r.ip}</td>
                                         <td style={td}>{r.interval}s</td>
@@ -315,8 +361,33 @@ function App(){
               <p style={{ marginTop: 12, opacity: 0.7 }}>
                 V1: state-change logging only (UP↔DOWN). Default mode: PingCmd.
             </p>
+            <div style={{
+                position: "fixed",
+                right: 16,
+                bottom: 16,
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                zIndex: 9999
+                }}>
+                {toasts.map(t => (
+                    <div key={t.id} style={{
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    background: "#111",
+                    color: "white",
+                    border: "1px solid #333",
+                    minWidth: 260,
+                    boxShadow: "0 6px 18px rgba(0,0,0,0.35)"
+                    }}>
+                    {t.msg}
+                    </div>
+                ))}
+            </div>
          </div>
     )
+
+
 
 }
 const th = {

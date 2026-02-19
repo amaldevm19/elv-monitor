@@ -18,8 +18,48 @@ export function ImportDevices(arg1) {
   return window['go']['main']['App']['ImportDevices'](arg1);
 }
 
+export function IsPolling() {
+  return window['go']['main']['App']['IsPolling']();
+}
+
+export function IsWindowVisible() {
+  return window['go']['main']['App']['IsWindowVisible']();
+}
+
 export function ListDevices() {
   return window['go']['main']['App']['ListDevices']();
+}
+
+export function MenuAbout() {
+  return window['go']['main']['App']['MenuAbout']();
+}
+
+export function MenuAddIpDevice() {
+  return window['go']['main']['App']['MenuAddIpDevice']();
+}
+
+export function MenuImportCSV() {
+  return window['go']['main']['App']['MenuImportCSV']();
+}
+
+export function MenuOpenLogsFolder() {
+  return window['go']['main']['App']['MenuOpenLogsFolder']();
+}
+
+export function MenuRefreshDevices() {
+  return window['go']['main']['App']['MenuRefreshDevices']();
+}
+
+export function MenuStartMonitoring() {
+  return window['go']['main']['App']['MenuStartMonitoring']();
+}
+
+export function MenuStopMonitoring() {
+  return window['go']['main']['App']['MenuStopMonitoring']();
+}
+
+export function SetPolling(arg1) {
+  return window['go']['main']['App']['SetPolling'](arg1);
 }
 
 export function StartMonitoring() {

@@ -6,23 +6,34 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 
 	"elv-monitor/internal/models"
 	"elv-monitor/internal/monitor"
 	"elv-monitor/internal/storage"
+
+	"github.com/wailsapp/wails/v2/pkg/menu"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+var trayOnce sync.Once
 
 // App struct
 type App struct {
 	ctx context.Context
 
-	mu      sync.RWMutex
-	devices map[string]models.Device
-	manager *monitor.Manager
-	store   *storage.SQLiteStore
+	mu            sync.RWMutex
+	devices       map[string]models.Device
+	manager       *monitor.Manager
+	store         *storage.SQLiteStore
+	polling       bool
+	windowVisible bool
+	menuStart     *menu.MenuItem
+	menuStop      *menu.MenuItem
 }
 
 type ImportResult struct {
@@ -60,6 +71,10 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	trayOnce.Do(func() {
+		go a.startTray()
+	})
+	a.setWindowVisible(true)
 	devs, err := a.store.ListDevices()
 	if err != nil {
 		return
@@ -70,6 +85,32 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.manager.SetDevices(a.deviceSliceUnsafe())
 	a.mu.Unlock()
+
+	a.manager.SetOnStateChange(func(d models.Device, prev, cur monitor.Status, r monitor.CheckResult) {
+		//  emit a generic change event if you want:
+		payload := map[string]any{
+			"id":     d.Id,
+			"ip":     d.IP,
+			"prev":   string(prev),
+			"cur":    string(cur),
+			"reason": r.Reason,
+		}
+
+		if a.IsWindowVisible() {
+			runtime.EventsEmit(a.ctx, "device:changed", payload)
+		} else {
+			runtime.WindowShow(a.ctx)
+			runtime.WindowUnminimise(a.ctx)
+			runtime.WindowExecJS(a.ctx, "window.focus()")
+			// give window time to appear before toast
+			go func() {
+				time.Sleep(150 * time.Millisecond)
+				runtime.EventsEmit(a.ctx, "device:changed", payload)
+			}()
+		}
+
+	})
+
 }
 
 func (a *App) ListDevices() []models.Device {
@@ -153,9 +194,9 @@ func (a *App) deviceSliceUnsafe() []models.Device {
 
 func (a *App) StartMonitoring() {
 	// ensure manager has latest device list
-	a.mu.RLock()
+
 	a.manager.SetDevices(a.deviceSliceUnsafe())
-	a.mu.RUnlock()
+	a.SetPolling(true)
 
 	a.manager.Start()
 
@@ -163,6 +204,8 @@ func (a *App) StartMonitoring() {
 
 func (a *App) StopMonitoring() {
 	a.manager.Stop()
+	a.SetPolling(false)
+
 }
 
 func (a *App) GetStatusSnapshot() map[string]monitor.DeviceState {
@@ -230,6 +273,78 @@ func (a *App) ImportDevices(devs []models.Device) (ImportResult, error) {
 
 }
 
+func (a *App) IsPolling() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.polling
+}
+
+func (a *App) SetPolling(v bool) {
+	log.Printf("[SetPolling] v=%v ctxNil=%v", v, a.ctx == nil)
+	a.mu.Lock()
+	a.polling = v
+	a.mu.Unlock()
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "polling:changed", v)
+	}
+	if a.menuStart != nil && a.menuStop != nil && a.ctx != nil {
+		if v {
+			a.menuStart.Disable()
+			a.menuStop.Enable()
+		} else {
+			a.menuStart.Enable()
+			a.menuStop.Disable()
+		}
+		// Crucial step: Apply the changes to the UI
+		runtime.MenuUpdateApplicationMenu(a.ctx)
+	}
+
+}
+
+func (a *App) setWindowVisible(v bool) {
+	a.mu.Lock()
+	a.windowVisible = v
+	a.mu.Unlock()
+}
+
+func (a *App) IsWindowVisible() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.windowVisible
+}
+
 func itoa(n int) string {
 	return fmt.Sprintf("%d", n)
+}
+
+func (a *App) MenuAddIpDevice() {
+	runtime.EventsEmit(a.ctx, "ui:addDevice", nil)
+}
+
+func (a *App) MenuImportCSV() {
+	runtime.EventsEmit(a.ctx, "ui:importCSV", nil)
+}
+
+func (a *App) MenuStartMonitoring() {
+	a.StartMonitoring()
+}
+
+func (a *App) MenuStopMonitoring() {
+	a.StopMonitoring()
+}
+
+func (a *App) MenuRefreshDevices() {
+	runtime.EventsEmit(a.ctx, "ui:refreshDevice", nil)
+}
+
+func (a *App) MenuOpenLogsFolder() {
+	openFolder("logs")
+}
+
+func (a *App) MenuAbout() {
+	_, _ = runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+		Type:    runtime.InfoDialog,
+		Title:   "About ELV-Monitor",
+		Message: "ELV Monitor\nV1 - IP monitoring tool",
+	})
 }

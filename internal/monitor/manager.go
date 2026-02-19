@@ -17,17 +17,18 @@ type DeviceState struct {
 }
 
 type Manager struct {
-	mu      sync.RWMutex
-	devs    map[string]models.Device
-	state   map[string]DeviceState
-	running bool
-	workers int
-	icmp    ICMPChecker
-	tcp     TCPChecker
-	ping    PingCmdChecker
-	logger  *storage.CSVLogger
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
+	mu            sync.RWMutex
+	devs          map[string]models.Device
+	state         map[string]DeviceState
+	running       bool
+	workers       int
+	icmp          ICMPChecker
+	tcp           TCPChecker
+	ping          PingCmdChecker
+	logger        *storage.CSVLogger
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	onStateChange func(d models.Device, prev Status, cur Status, r CheckResult)
 }
 
 func NewManager(logger *storage.CSVLogger) *Manager {
@@ -40,6 +41,12 @@ func NewManager(logger *storage.CSVLogger) *Manager {
 		tcp:     TCPChecker{Timeout: 2 * time.Second},
 		workers: 10,
 	}
+}
+
+func (m *Manager) SetOnStateChange(fn func(d models.Device, prev Status, cur Status, r CheckResult)) {
+	m.mu.Lock()
+	m.onStateChange = fn
+	m.mu.Unlock()
 }
 
 func (m *Manager) SetDevices(devices []models.Device) {
@@ -185,6 +192,45 @@ func (m *Manager) CheckAuto(ctx context.Context, d models.Device) CheckResult {
 }
 
 func (m *Manager) ApplyResult(d models.Device, r CheckResult) {
+	var (
+		changed bool
+		prevSt  Status
+		fn      func(models.Device, Status, Status, CheckResult)
+	)
+
+	m.mu.Lock()
+	prev := m.state[d.Id]
+	isFirst := prev.LastSeen.IsZero()
+	changed = !isFirst && prev.LastStatus != r.Status
+	prevSt = prev.LastStatus
+
+	m.state[d.Id] = DeviceState{
+		LastStatus: r.Status,
+		LastSeen:   r.CheckedAt,
+		LastRTT:    r.RTT,
+		LastReason: r.Reason,
+	}
+
+	fn = m.onStateChange
+	m.mu.Unlock()
+
+	if changed {
+		log.Printf("[StateChange] %s (%s): %s -> %s\n", d.Name, d.IP, prevSt, r.Status)
+		if fn != nil {
+			fn(d, prevSt, r.Status, r)
+		}
+		if m.logger != nil {
+			rttms := int64(0)
+			if r.RTT > 0 {
+				rttms = r.RTT.Milliseconds()
+			}
+			_ = m.logger.LogStateChange(d.Name, d.IP, string(r.Status), r.Reason, r.CheckedAt, rttms)
+		}
+	}
+}
+
+/*
+func (m *Manager) ApplyResult(d models.Device, r CheckResult) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	prev := m.state[d.Id]
@@ -205,6 +251,14 @@ func (m *Manager) ApplyResult(d models.Device, r CheckResult) {
 			"[StateChange] %s (%s): %s -> %s\n",
 			d.Name, d.IP, prev.LastStatus, r.Status,
 		)
+		if m.onStateChange != nil {
+			// call without holding lock (important)
+			fn := m.onStateChange
+			m.mu.Unlock()
+			fn(d, prev.LastStatus, r.Status, r)
+			m.mu.Lock()
+		}
+
 	}
 
 	if changed && m.logger != nil {
@@ -215,4 +269,18 @@ func (m *Manager) ApplyResult(d models.Device, r CheckResult) {
 		_ = m.logger.LogStateChange(d.Name, d.IP, string(r.Status), r.Reason, r.CheckedAt, rttms)
 
 	}
+}
+*/
+
+func (m *Manager) Summary() (total int, down int) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	total = len(m.devs)
+	for _, d := range m.state {
+		if d.LastStatus == "down" {
+			down++
+		}
+	}
+	return total, down
+
 }

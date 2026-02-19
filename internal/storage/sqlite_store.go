@@ -166,6 +166,9 @@ func (s *SQLiteStore) GetIdByIP(ip string) (string, bool, error) {
 	var id string
 	err := s.db.QueryRow(`SELECT id FROM devices WHERE ip = ? LIMIT 1;`, ip).Scan(&id)
 	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
 		return "", false, err
 	}
 	return id, true, nil
