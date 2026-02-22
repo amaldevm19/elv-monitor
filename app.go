@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
+
+	//"log"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var trayOnce sync.Once
@@ -26,14 +29,20 @@ var trayOnce sync.Once
 type App struct {
 	ctx context.Context
 
-	mu            sync.RWMutex
-	devices       map[string]models.Device
-	manager       *monitor.Manager
-	store         *storage.SQLiteStore
-	polling       bool
-	windowVisible bool
-	menuStart     *menu.MenuItem
-	menuStop      *menu.MenuItem
+	mu               sync.RWMutex
+	devices          map[string]models.Device
+	manager          *monitor.Manager
+	store            *storage.SQLiteStore
+	polling          bool
+	windowVisible    bool
+	menuStart        *menu.MenuItem
+	menuStop         *menu.MenuItem
+	menuAdd          *menu.MenuItem
+	menuImport       *menu.MenuItem
+	menuRefresh      *menu.MenuItem
+	menuOpenLog      *menu.MenuItem
+	menuShowAuditLog *menu.MenuItem
+	currentUser      *models.UserDTO
 }
 
 type ImportResult struct {
@@ -71,6 +80,7 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.updateMenuState()
 	trayOnce.Do(func() {
 		go a.startTray()
 	})
@@ -111,6 +121,11 @@ func (a *App) startup(ctx context.Context) {
 
 	})
 
+	has, _ := a.store.HasAnyUsers()
+	if !has {
+		runtime.EventsEmit(a.ctx, "auth:bootstrap")
+	}
+
 }
 
 func (a *App) ListDevices() []models.Device {
@@ -133,6 +148,9 @@ func (a *App) ListDevices() []models.Device {
 }
 
 func (a *App) AddDevice(d models.Device) error {
+	if err := a.requireLogin(models.AuditDeviceAdd, d.IP); err != nil {
+		return err
+	}
 	if d.IP == "" || d.Name == "" {
 		return errors.New("IP and Name are required")
 	}
@@ -163,11 +181,15 @@ func (a *App) AddDevice(d models.Device) error {
 	a.mu.RLock()
 	a.manager.SetDevices(a.deviceSliceUnsafe())
 	a.mu.RUnlock()
+	a.audit(models.AuditDeviceAdd, d.IP, fmt.Sprintf(`{"name":"%s"}`, d.Name))
 	return nil
 
 }
 
 func (a *App) DeleteDevice(id string) error {
+	if err := a.requireLogin(models.AuditDeviceDelete, "Device Delete"); err != nil {
+		return err
+	}
 	if id == "" {
 		return errors.New("ID is required")
 	}
@@ -192,20 +214,53 @@ func (a *App) deviceSliceUnsafe() []models.Device {
 
 }
 
-func (a *App) StartMonitoring() {
-	// ensure manager has latest device list
+func (a *App) StartMonitoring() error {
 
+	if err := a.requireLogin(models.AuditMonitorStart, ""); err != nil {
+		return err
+	}
+	a.audit(models.AuditMonitorStart, "", "")
+	// ensure manager has latest device list
 	a.manager.SetDevices(a.deviceSliceUnsafe())
 	a.SetPolling(true)
 
 	a.manager.Start()
+	return nil
 
 }
 
-func (a *App) StopMonitoring() {
+func (a *App) StopMonitoring() error {
+	if err := a.requireLogin(models.AuditMonitorStop, ""); err != nil {
+		return err
+	}
+	a.audit(models.AuditMonitorStop, "", "")
 	a.manager.Stop()
 	a.SetPolling(false)
+	return nil
+}
 
+func (a *App) QuitApp() {
+	if err := a.requireLogin(models.AuditQuitAttempt, "app"); err != nil {
+		a.audit(models.AuditQuitDenied, "app", "")
+		return
+	}
+	if a.IsPolling() {
+		btn, _ := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+			Type:          runtime.QuestionDialog,
+			Title:         "Close ELV Monitoring",
+			Message:       "Polling is currently running.\nDo you really want to quit?",
+			Buttons:       []string{"Yes", "No"},
+			DefaultButton: "No",
+			CancelButton:  "No",
+		})
+		if btn != "Yes" {
+			a.audit(models.AuditQuitCancel, "app", "")
+			return
+		}
+	}
+	a.audit(models.AuditQuitConfirm, "app", "")
+	a.manager.Stop()
+	runtime.Quit(a.ctx)
 }
 
 func (a *App) GetStatusSnapshot() map[string]monitor.DeviceState {
@@ -213,6 +268,9 @@ func (a *App) GetStatusSnapshot() map[string]monitor.DeviceState {
 }
 
 func (a *App) ImportDevices(devs []models.Device) (ImportResult, error) {
+	if err := a.requireLogin(models.AuditDeviceImport, "csv"); err != nil {
+		return ImportResult{}, err
+	}
 	res := ImportResult{Total: len(devs)}
 	if len(devs) == 0 {
 		return res, nil
@@ -269,6 +327,9 @@ func (a *App) ImportDevices(devs []models.Device) (ImportResult, error) {
 	}
 	a.mu.Unlock()
 	a.manager.SetDevices(a.deviceSliceUnsafe())
+
+	a.audit(models.AuditDeviceImport, "csv", fmt.Sprintf(`{"total":%d,"added":%d,"updated":%d,"failed":%d}`,
+		res.Total, res.Added, res.Updated, res.Failed))
 	return res, nil
 
 }
@@ -280,10 +341,11 @@ func (a *App) IsPolling() bool {
 }
 
 func (a *App) SetPolling(v bool) {
-	log.Printf("[SetPolling] v=%v ctxNil=%v", v, a.ctx == nil)
+	//log.Printf("[SetPolling] v=%v ctxNil=%v", v, a.ctx == nil)
 	a.mu.Lock()
 	a.polling = v
 	a.mu.Unlock()
+	a.updateMenuState()
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "polling:changed", v)
 	}
@@ -338,13 +400,226 @@ func (a *App) MenuRefreshDevices() {
 }
 
 func (a *App) MenuOpenLogsFolder() {
+	if err := a.requireLogin(models.AuditOpenLogsFolder, "logs"); err != nil {
+		return
+	}
+	a.audit(models.AuditOpenLogsFolder, "logs", "")
 	openFolder("logs")
+}
+
+func (a *App) MenuShowAuditLog() {
+	if err := a.requireLogin(models.AuditViewLogs, "audit_logs"); err != nil {
+		return
+	}
+	a.audit(models.AuditViewLogs, "audit_logs", "")
+	runtime.EventsEmit(a.ctx, "ui:showAudit", nil)
 }
 
 func (a *App) MenuAbout() {
 	_, _ = runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
 		Type:    runtime.InfoDialog,
 		Title:   "About ELV-Monitor",
-		Message: "ELV Monitor\nV1 - IP monitoring tool",
+		Message: "ELV Monitor\nV1 - IP monitoring tool \n\nCreated by @Amaldev Mahadevan",
 	})
+}
+
+// User authentication methods
+
+func (a *App) CreateFirstAdminUser(username, password string) error {
+	username = strings.TrimSpace(username)
+	if username == "" || password == "" {
+		return errors.New("username and password required")
+	}
+	// Check if any users exist
+	hasUsers, err := a.store.HasAnyUsers()
+	if err != nil {
+		return err
+	}
+	if hasUsers {
+		return errors.New("admin already exists") // Already has users
+	}
+
+	// Hash the password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	// Create the first admin user
+	user := models.User{
+		Id:           newUID(),
+		Username:     username,
+		PasswordHash: string(hashedPassword),
+		Role:         models.RoleAdmin,
+		CreatedAt:    time.Now(),
+	}
+	err = a.store.CreateUser(user)
+	if err != nil {
+		return err
+	}
+	// Log the admin creation action
+	auditLog := models.AuditLog{
+		Id:        newUID(),
+		Timestamp: time.Now(),
+		UserId:    user.Id,
+		Username:  user.Username,
+		Action:    models.AuditAdminCreated,
+	}
+	err = a.store.InsertAuditLog(auditLog)
+	if err != nil {
+		//log.Printf("Failed to log admin creation: %v", err)
+	}
+
+	return nil
+}
+
+func (a *App) Login(username, password string) (*models.UserDTO, error) {
+	username = strings.TrimSpace(username)
+	if username == "" || password == "" {
+		return nil, errors.New("username and password required")
+	}
+	user, ok, err := a.store.GetUserByUsername(username)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		a.auditLoginFail(username)
+		return nil, errors.New("Invalid credentials")
+	}
+	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
+	if err != nil {
+		return nil, errors.New("invalid credentials")
+	}
+	a.currentUser = &models.UserDTO{
+		Id:       user.Id,
+		Username: user.Username,
+		Role:     user.Role,
+	}
+
+	a.updateMenuState()
+	_ = a.store.UpdateUserLastLogin(user.Id, time.Now().UTC())
+
+	_ = a.store.InsertAuditLog(models.AuditLog{
+		Id:        newUID(),
+		Timestamp: time.Now().UTC(),
+		UserId:    user.Id,
+		Username:  user.Username,
+		Action:    models.AuditLoginSuccess,
+	})
+	return a.currentUser, nil
+}
+
+func (a *App) auditLoginFail(username string) {
+	_ = a.store.InsertAuditLog(models.AuditLog{
+		Id:        newUID(),
+		Timestamp: time.Now().UTC(),
+		Username:  username,
+		Action:    models.AuditLoginFail,
+	})
+}
+
+func (a *App) CurrentUser() *models.UserDTO {
+	return a.currentUser
+}
+
+func (a *App) Logout() {
+	if a.currentUser == nil {
+		return
+	}
+	_ = a.store.InsertAuditLog(models.AuditLog{
+		Id:        newUID(),
+		Timestamp: time.Now().UTC(),
+		UserId:    a.currentUser.Id,
+		Username:  a.currentUser.Username,
+		Action:    models.AuditLogout,
+	})
+
+	a.currentUser = nil
+	a.updateMenuState()
+}
+
+func (a *App) requireLogin(action models.AuditAction, target string) error {
+	if a.currentUser != nil {
+		return nil
+	}
+
+	_ = a.store.InsertAuditLog(models.AuditLog{
+		Id:          newUID(),
+		Timestamp:   time.Now().UTC(),
+		Action:      models.AuditDenied,
+		Target:      target,
+		Username:    "",
+		DetailsJSON: fmt.Sprintf(`{"required":"login","action":"%s"}`, action),
+	})
+
+	// Tell UI to open Login modal
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "auth:required", map[string]any{
+			"action": string(action),
+			"target": target,
+		})
+	}
+	return errors.New("login required")
+}
+
+func (a *App) audit(action models.AuditAction, target string, detailsJSON string) {
+	var uid, uname string
+	if a.currentUser != nil {
+		uid = a.currentUser.Id
+		uname = a.currentUser.Username
+	}
+
+	_ = a.store.InsertAuditLog(models.AuditLog{
+		Id:          newUID(),
+		Timestamp:   time.Now().UTC(),
+		UserId:      uid,
+		Username:    uname,
+		Action:      action,
+		Target:      target,
+		DetailsJSON: detailsJSON,
+	})
+}
+
+func (a *App) HasAnyUser() (bool, error) { return a.store.HasAnyUsers() }
+
+func (a *App) updateMenuState() {
+	if a.ctx == nil {
+		return
+	}
+	a.mu.RLock()
+	loggedIn := a.currentUser != nil
+	polling := a.IsPolling()
+	a.mu.RUnlock()
+
+	// helper
+	set := func(it *menu.MenuItem, enabled bool) {
+		if it == nil {
+			return
+		}
+		if enabled {
+			it.Enable()
+		} else {
+			it.Disable()
+		}
+	}
+	// Restricted actions require login
+	set(a.menuAdd, loggedIn)
+	set(a.menuImport, loggedIn)
+	set(a.menuOpenLog, loggedIn)
+
+	// Start/Stop require login + depend on polling state
+	set(a.menuStart, loggedIn && !polling)
+	set(a.menuStop, loggedIn && polling)
+
+	// Refresh: your choice
+	// If you want refresh allowed even when logged out -> true
+	// If you want refresh restricted -> loggedIn
+	set(a.menuRefresh, true)
+
+	// Apply changes
+	runtime.MenuUpdateApplicationMenu(a.ctx)
+}
+
+func (a *App) GetAuditLogs(limit int) ([]models.AuditLog, error) {
+	return a.store.ListAuditLogs(limit)
 }

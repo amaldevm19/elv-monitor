@@ -1,9 +1,11 @@
 package main
 
 import (
+	"elv-monitor/internal/models"
 	_ "embed"
 	"fmt"
-	"log"
+
+	//"log"
 	"os/exec"
 	"path/filepath"
 	"time"
@@ -34,43 +36,32 @@ func (a *App) startTray() {
 				select {
 				case <-mShow.ClickedCh:
 					runtime.WindowShow(a.ctx)
-					runtime.WindowMinimise(a.ctx)
+					runtime.WindowUnminimise(a.ctx)
 					a.setWindowVisible(true)
 				case <-mStart.ClickedCh:
-					a.StartMonitoring()
+					if err := a.StartMonitoring(); err != nil {
+						// optionally show dialog or emit auth-required event already done inside requireLogin
+						continue
+					}
 					mStart.Disable()
 					mStop.Enable()
 				case <-mStop.ClickedCh:
-					a.StopMonitoring()
+					if err := a.StopMonitoring(); err != nil {
+						continue
+					}
 					mStart.Enable()
 					mStop.Disable()
 				case <-mHide.ClickedCh:
 					runtime.WindowHide(a.ctx)
 					a.setWindowVisible(false)
 				case <-mOpenLog.ClickedCh:
+					if err := a.requireLogin(models.AuditOpenLogsFolder, "logs"); err != nil {
+						continue
+					}
+					a.audit(models.AuditOpenLogsFolder, "logs", "")
 					openFolder("logs")
 				case <-mQuit.ClickedCh:
-					a.mu.RLock()
-					running := a.polling
-					a.mu.RUnlock()
-					if running {
-						btn, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
-							Type:          runtime.QuestionDialog,
-							Title:         "Close ELV Monitoring",
-							Message:       "Polling is currently running.\nDo you really want to quit?",
-							Buttons:       []string{"Yes", "No"},
-							DefaultButton: "No",
-							CancelButton:  "No",
-						})
-						if err != nil || btn != "Yes" {
-							continue
-						}
-					}
-					a.manager.Stop()
-					systray.Quit()
-					runtime.Quit(a.ctx)
-					return
-
+					a.QuitApp()
 				}
 			}
 		}()
@@ -105,7 +96,7 @@ func (a *App) startTray() {
 			}
 		}()
 
-	}, func() { log.Println("ELV Monitor Closed") })
+	}, func() { /*log.Println("ELV Monitor Closed")*/ })
 }
 
 func openFolder(path string) {

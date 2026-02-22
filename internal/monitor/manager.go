@@ -4,7 +4,8 @@ import (
 	"context"
 	"elv-monitor/internal/models"
 	"elv-monitor/internal/storage"
-	"log"
+
+	//"log"
 	"sync"
 	"time"
 )
@@ -69,7 +70,7 @@ func (m *Manager) Snapshot() map[string]DeviceState {
 }
 
 func (m *Manager) Start() {
-	log.Println("[Manager] Started monitoring")
+	//log.Println("[Manager] Started monitoring")
 	m.mu.Lock()
 	if m.running {
 		m.mu.Unlock()
@@ -104,9 +105,9 @@ func (m *Manager) Start() {
 		m.wg.Add(1)
 		go func(workerID int) {
 			defer m.wg.Done()
-			log.Printf("[Worker-%d] started\n", workerID)
+			//log.Printf("[Worker-%d] started\n", workerID)
 			for d := range jobs {
-				log.Printf("[Worker-%d] checking %s (%s)\n", workerID, d.Name, d.IP)
+				//log.Printf("[Worker-%d] checking %s (%s)\n", workerID, d.Name, d.IP)
 				if !d.Enabled {
 					continue
 				}
@@ -145,9 +146,9 @@ func (m *Manager) Start() {
 						lastrun[d.Id] = time.Now()
 						select {
 						case jobs <- d:
-							log.Printf("[Scheduler] Enqueue device %s (%s)\n", d.Name, d.IP)
+							//log.Printf("[Scheduler] Enqueue device %s (%s)\n", d.Name, d.IP)
 						default:
-							log.Println("[Scheduler] Job queue full, skipping")
+							//log.Println("[Scheduler] Job queue full, skipping")
 							// Drop the job if the channel is full to avoid blocking
 						}
 					}
@@ -215,7 +216,7 @@ func (m *Manager) ApplyResult(d models.Device, r CheckResult) {
 	m.mu.Unlock()
 
 	if changed {
-		log.Printf("[StateChange] %s (%s): %s -> %s\n", d.Name, d.IP, prevSt, r.Status)
+		//log.Printf("[StateChange] %s (%s): %s -> %s\n", d.Name, d.IP, prevSt, r.Status)
 		if fn != nil {
 			fn(d, prevSt, r.Status, r)
 		}

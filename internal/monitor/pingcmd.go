@@ -2,7 +2,9 @@ package monitor
 
 import (
 	"context"
-	"log"
+	"syscall"
+
+	//"log"
 	"os/exec"
 	"regexp"
 	"runtime"
@@ -21,11 +23,17 @@ func (p *PingCmdChecker) Name() string {
 	return "pingcmd"
 }
 
+func hideWindow(cmd *exec.Cmd) {
+	if runtime.GOOS == "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	}
+}
+
 func (p *PingCmdChecker) Check(ctx context.Context, d models.Device) CheckResult {
 	// Implementation of ping command checking would go here
 	// For now, return a default result
 	now := time.Now()
-	log.Printf("[PingCmd] Pinging %s\n", d.IP)
+	//log.Printf("[PingCmd] Pinging %s\n", d.IP)
 
 	if runtime.GOOS != "windows" {
 		return CheckResult{
@@ -46,6 +54,7 @@ func (p *PingCmdChecker) Check(ctx context.Context, d models.Device) CheckResult
 	// -w ms: timeout in milliseconds
 
 	cmd := exec.CommandContext(ctx, "ping", "-n", "1", "-w", strconv.Itoa(timeoutMs), d.IP)
+	hideWindow(cmd)
 
 	out, err := cmd.CombinedOutput()
 
@@ -53,7 +62,7 @@ func (p *PingCmdChecker) Check(ctx context.Context, d models.Device) CheckResult
 
 	low := strings.ToLower(text)
 
-	log.Printf("[PingCmd] Output for %s:\n%s\n", d.IP, text)
+	//log.Printf("[PingCmd] Output for %s:\n%s\n", d.IP, text)
 
 	if err == nil && strings.Contains(low, "reply from") && strings.Contains(low, "ttl=") {
 

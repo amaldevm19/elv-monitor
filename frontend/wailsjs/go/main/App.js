@@ -6,12 +6,28 @@ export function AddDevice(arg1) {
   return window['go']['main']['App']['AddDevice'](arg1);
 }
 
+export function CreateFirstAdminUser(arg1, arg2) {
+  return window['go']['main']['App']['CreateFirstAdminUser'](arg1, arg2);
+}
+
+export function CurrentUser() {
+  return window['go']['main']['App']['CurrentUser']();
+}
+
 export function DeleteDevice(arg1) {
   return window['go']['main']['App']['DeleteDevice'](arg1);
 }
 
+export function GetAuditLogs(arg1) {
+  return window['go']['main']['App']['GetAuditLogs'](arg1);
+}
+
 export function GetStatusSnapshot() {
   return window['go']['main']['App']['GetStatusSnapshot']();
+}
+
+export function HasAnyUser() {
+  return window['go']['main']['App']['HasAnyUser']();
 }
 
 export function ImportDevices(arg1) {
@@ -28,6 +44,14 @@ export function IsWindowVisible() {
 
 export function ListDevices() {
   return window['go']['main']['App']['ListDevices']();
+}
+
+export function Login(arg1, arg2) {
+  return window['go']['main']['App']['Login'](arg1, arg2);
+}
+
+export function Logout() {
+  return window['go']['main']['App']['Logout']();
 }
 
 export function MenuAbout() {
@@ -50,12 +74,20 @@ export function MenuRefreshDevices() {
   return window['go']['main']['App']['MenuRefreshDevices']();
 }
 
+export function MenuShowAuditLog() {
+  return window['go']['main']['App']['MenuShowAuditLog']();
+}
+
 export function MenuStartMonitoring() {
   return window['go']['main']['App']['MenuStartMonitoring']();
 }
 
 export function MenuStopMonitoring() {
   return window['go']['main']['App']['MenuStopMonitoring']();
+}
+
+export function QuitApp() {
+  return window['go']['main']['App']['QuitApp']();
 }
 
 export function SetPolling(arg1) {

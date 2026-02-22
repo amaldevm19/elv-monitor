@@ -6,9 +6,17 @@ import {main} from '../models';
 
 export function AddDevice(arg1:models.Device):Promise<void>;
 
+export function CreateFirstAdminUser(arg1:string,arg2:string):Promise<void>;
+
+export function CurrentUser():Promise<models.UserDTO>;
+
 export function DeleteDevice(arg1:string):Promise<void>;
 
+export function GetAuditLogs(arg1:number):Promise<Array<models.AuditLog>>;
+
 export function GetStatusSnapshot():Promise<Record<string, monitor.DeviceState>>;
+
+export function HasAnyUser():Promise<boolean>;
 
 export function ImportDevices(arg1:Array<models.Device>):Promise<main.ImportResult>;
 
@@ -17,6 +25,10 @@ export function IsPolling():Promise<boolean>;
 export function IsWindowVisible():Promise<boolean>;
 
 export function ListDevices():Promise<Array<models.Device>>;
+
+export function Login(arg1:string,arg2:string):Promise<models.UserDTO>;
+
+export function Logout():Promise<void>;
 
 export function MenuAbout():Promise<void>;
 
@@ -28,9 +40,13 @@ export function MenuOpenLogsFolder():Promise<void>;
 
 export function MenuRefreshDevices():Promise<void>;
 
+export function MenuShowAuditLog():Promise<void>;
+
 export function MenuStartMonitoring():Promise<void>;
 
 export function MenuStopMonitoring():Promise<void>;
+
+export function QuitApp():Promise<void>;
 
 export function SetPolling(arg1:boolean):Promise<void>;
 

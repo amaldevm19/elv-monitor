@@ -8,10 +8,19 @@ import {
     AddDevice,
     DeleteDevice,
     ImportDevices,
-    IsPolling  
+    IsPolling,
+    HasAnyUser,
+    Login,
+    Logout,
+    CurrentUser,  
 } from "../wailsjs/go/main/App"
 
 import { EventsOn } from "../wailsjs/runtime/runtime";
+
+import BootstrapAdminModal from './BootstrapAdminModal';
+import LoginModal from './LoginMdal';
+import LoginRequiredBanner from "./LoginRequiredBanner"
+import AuditLogModal from "./AuditLogModal"
 
 function formatDateTime(dt){
     if(!dt) return "-";
@@ -40,6 +49,16 @@ function App(){
     const [tcpPort, setTcpPort] = useState(80);
     const [showAddModal,setShowAddModal] = useState(false)
 
+    // User state
+    const [user, setUser] = useState(null); // UserDTO | null
+    const [hasUsers, setHasUsers] = useState(null); // null=loading, boolean after
+    const [showLogin, setShowLogin] = useState(false);
+    const [showBootstrap, setShowBootstrap] = useState(false);
+    const [showLoginRequired, setShowLoginRequired] = useState(false);
+    const [loginRequiredInfo, setLoginRequiredInfo] = useState(null);
+     const [showAudit, setShowAudit] = useState(false);
+
+
     const refreshDevices = async ()=>{
         try {
             const devs = await ListDevices();
@@ -49,11 +68,6 @@ function App(){
             console.error("Error in ListDevices", err)
         }
     }
-
-    // // Refresh Devices
-    // useEffect(()=>{
-    //     refreshDevices()
-    // },[])
 
     //Load device once on Start
     useEffect(()=>{
@@ -110,7 +124,9 @@ function App(){
         const offRefresh = EventsOn("ui:refreshDevice",()=>{
             refreshDevices()
         })
-        return () => {off(), offAdd(), offImport(), offRefresh() };
+        const offShowAudit = EventsOn("ui:showAudit", () => setShowAudit(true));
+
+        return () => {off(), offAdd(), offImport(), offRefresh() , offShowAudit() };
     }, []);
 
 
@@ -120,6 +136,46 @@ function App(){
         return () => off();
     }, []);
 
+    // 1) Initial auth load
+    useEffect(() => {
+        (async () => {
+        try {
+            const u = await CurrentUser();
+            setUser(u ?? null);
+
+            const hu = await HasAnyUser();
+            setHasUsers(!!hu);
+
+            // If no users exist => bootstrap admin modal
+            if (!hu) setShowBootstrap(true);
+        } catch (e) {
+            console.error("Auth init failed", e);
+            setHasUsers(false);
+            setShowBootstrap(true);
+        }
+        })();
+    }, []);
+
+    // 2) Catch backend "auth required" event
+    useEffect(() => {
+        const off = EventsOn("auth:required", (payload) => {
+        setLoginRequiredInfo(payload ?? null);
+        setShowLoginRequired(true);
+        setShowLogin(true); // open login modal immediately
+        });
+        return () => off();
+    }, []);
+
+    // Optional: backend emits auth:bootstrap
+    useEffect(() => {
+        const off = EventsOn("auth:bootstrap", () => {
+        setShowBootstrap(true);
+        setHasUsers(false);
+        });
+        return () => off();
+    }, []);
+
+    const canManage = !!user; // V1: logged-in required for restricted actions
    
     const rows = useMemo(()=>{
         return (devices|| []).map((d)=>{
@@ -201,12 +257,31 @@ function App(){
         <div style={{ padding: 16, fontFamily: "Segoe UI, sans-serif" }}>
             <h2 style={{ marginTop: 0 }}>ELV Monitor (V1)</h2>
             <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-            <button onClick={onStart}>Start</button>
-            <button onClick={onStop}>Stop</button>
-            <button onClick={refreshDevices}> Refresh Devices</button>
-            <div style={{ marginLeft: 12, opacity: 0.7 }}>
-                Devices : {devices.length} | Polling: {polling? "ON":"OFF"}
-            </div>
+                <button disabled={!canManage} onClick={onStart}>Start</button>
+                <button disabled={!canManage} onClick={onStop}>Stop</button>
+                <button disabled={!canManage} onClick={refreshDevices}> Refresh Devices</button>
+                <div style={{ marginLeft: 12, opacity: 0.7 }}>
+                    Devices : {devices.length} | Polling: {polling? "ON":"OFF"}
+                </div>
+                <div className="text-sm text-gray-600">
+                        {user ? `Logged in: ${user.username}` : "Locked (view only)"}
+                </div>
+                <div className="flex gap-2">
+                    {!user && hasUsers && (
+                    <button className="border px-3 py-1 rounded" onClick={()=>setShowLogin(true)}>
+                        Login
+                    </button>
+                    )}
+                    {user && (
+                    <button className="border px-3 py-1 rounded"
+                            onClick={async ()=>{
+                                await Logout();
+                                setUser(null);
+                            }}>
+                        Logout
+                    </button>
+                    )}
+                </div>
             </div>
             {/* Add Device*/}
             {showAddModal &&
@@ -289,6 +364,35 @@ function App(){
                     await refreshDevices();
                 }}
             />
+            <BootstrapAdminModal
+                open={showBootstrap}
+                onCreated={async (u, p) => {
+                    setShowBootstrap(false);
+                    setHasUsers(true);
+                    // auto-login
+                    const dto = await Login(u, p);
+                    setUser(dto);
+                    setShowLogin(false);
+                    setShowLoginRequired(false);
+                }}
+            />
+
+            <LoginModal
+                open={showLogin}
+                onClose={() => setShowLogin(false)}
+                onLoggedIn={(dto) => {
+                    setUser(dto);
+                    setShowLoginRequired(false);
+                }}
+            />
+            <LoginRequiredBanner
+                open={showLoginRequired}
+                info={loginRequiredInfo}
+                onLogin={() => setShowLogin(true)}
+                onClose={() => setShowLoginRequired(false)}
+            />
+             <AuditLogModal open={showAudit} onClose={() => setShowAudit(false)} />
+             {!showAudit && (
              <div style={{ overflowX: "auto" }}>
                 <table
                     style={{
@@ -358,6 +462,7 @@ function App(){
                     </tbody>
                 </table>
              </div>
+             )}
               <p style={{ marginTop: 12, opacity: 0.7 }}>
                 V1: state-change logging only (UP↔DOWN). Default mode: PingCmd.
             </p>

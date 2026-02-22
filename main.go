@@ -80,6 +80,9 @@ func buildAppMenu(app *App) *menu.Menu {
 	logs.AddText("Open Logs folder", nil, func(_ *menu.CallbackData) {
 		app.MenuOpenLogsFolder()
 	})
+	logs.AddText("System Event Log...", nil, func(_ *menu.CallbackData) {
+		app.MenuShowAuditLog()
+	})
 
 	//-------------Help-----------
 
@@ -87,5 +90,6 @@ func buildAppMenu(app *App) *menu.Menu {
 	help.AddText("About", nil, func(_ *menu.CallbackData) {
 		app.MenuAbout()
 	})
+
 	return m
 }
